@@ -1,0 +1,236 @@
+#!/bin/sh
+
+# Daniel Faludi - xfalud00 - Project 1: wedi
+
+export POSIXLY_CORRECT=yes
+
+NOW=$(date +%Y-%m-%d) # Current date
+
+if [ -z "$WEDI_RC" ]; then # if wedirc is not set
+    echo "E: WEDI_RC not set" >&2
+    exit 1
+fi
+
+if ! [ -f "$WEDI_RC" ]; then # create wedirc file if it doesnt exist
+    FILEPATH=$(echo "$WEDI_RC" | sed 's/\(.*\)\/.*/\1/')
+    FILE=$(echo "$WEDI_RC" | sed 's:.*/::')
+    if [ -d "$FILEPATH" ]; then
+        touch "$FILE"
+    else
+        mkdir -p "$FILEPATH"
+        cd "$FILEPATH" || exit 1
+        touch "$FILE"
+    fi
+fi
+
+if [ -z "$EDITOR" ]; then # if editor is not set
+    if [ -z "$VISUAL" ]; then # if visual is not set
+        USING_EDITOR="vi"
+    else
+        USING_EDITOR="$VISUAL"
+    fi
+else
+    USING_EDITOR="$EDITOR"
+fi
+
+TESTRP=$(which realpath) # test if realpath is installed
+if [ -z "$TESTRP" ]; then
+    echo "E: realpath is not installed" >&2
+    exit 1
+fi
+
+log_edit()
+{
+    echo "$(realpath "${ARG}")|$NOW" >> "$WEDI_RC" # log to wedirc
+}
+
+open_last_edited() # find last edited file from directory and open it
+{
+    FOUND_FILE=$(tac "$WEDI_RC" | grep "$DIRPATH/[^/]*$" | sed -n '/|/,$p' | cut -f1 -d "|" | head -n 1)
+    if [ -z "$FOUND_FILE" ]; then
+        echo "E: No files edited in entered directory" >&2
+        exit 1
+    fi
+    ARG="$FOUND_FILE"
+    "$USING_EDITOR" "$ARG"
+}
+
+list_files() # list edited files from directory
+{
+    FOUND_FILES=$(grep "$DIRPATH/[^/]*$" "$WEDI_RC" | cut -f1 -d "|" | sort | uniq)
+	if [ -z "$FOUND_FILES" ]; then
+		echo "E: No files were edited in entered directory" >&2
+		exit 1
+	else
+        PRINT_FILE=$(echo "$FOUND_FILES" | sed 's:.*/::')
+		echo "$PRINT_FILE"
+	fi
+}
+
+open_most_edited() # open most edited file from directory
+{
+    ARG=$(grep "$DIRPATH/[^/]*$" "$WEDI_RC" | cut -f1 -d "|" | awk '{for(w=1;w<=NF;w++) print $w}' | sort | uniq -c | sort -nr | head -n 1 | awk '{print $2}')
+    if [ -z "$ARG" ]; then
+        echo "E: No files were edited in entered directory" >&2
+		exit 1
+    else
+        "$USING_EDITOR" "$ARG"
+        log_edit
+    fi
+}
+
+list_before() # list edited files before entered date
+{
+    FILES=$(grep "$DIRPATH/[^/]*$" "$WEDI_RC" | sort)
+    if [ -z "$FILES" ]; then
+        echo "E: No files were edited in entered directory" >&2
+		exit 1
+    fi
+	MATCH=""
+	for i in $FILES; do
+		FILE_DATE=$(echo "$i" | cut -f2 -d "|" | sed "s/-//g")
+		if [ "$FILE_DATE" -le "$DATE" ]; then
+			FILE=$(echo "$i" | cut -f1 -d "|" | sed 's:.*/::')
+			if [ "$FILE" != "$MATCH" ]; then
+				echo "$FILE"
+				MATCH="$FILE"
+			fi
+		fi
+	done
+}
+
+list_after() # list edited files after entered date
+{
+    FILES=$(grep "$DIRPATH/[^/]*$" "$WEDI_RC" | sort)
+    if [ -z "$FILES" ]; then
+        echo "E: No files were edited in entered directory" >&2
+		exit 1
+    fi
+	MATCH=""
+	for i in $FILES; do
+		FILE_DATE=$(echo "$i" | cut -f2 -d "|" | sed "s/-//g")
+		if [ "$FILE_DATE" -ge "$DATE" ]; then
+			FILE=$(echo "$i" | cut -f1 -d "|" | sed 's:.*/::')
+			if [ "$FILE" != "$MATCH" ]; then
+				echo "$FILE"
+				MATCH="$FILE"
+			fi
+		fi
+	done
+}
+
+case "$1" in # case for arguments
+    "-l") # list files in directory
+        if [ "$#" -gt 2 ]; then
+            echo "E: Too many arguments entered"
+        fi
+        if [ "$#" -eq 2 ]; then
+            if [ -d "$2" ]; then
+                DIRPATH="$2"
+            else
+                echo "E: Invalid directory entered" >&2
+                exit 1
+            fi
+            list_files "$DIRPATH"
+        elif [ "$#" -eq 1 ]; then
+            DIRPATH="$(realpath .)"
+            list_files "$DIRPATH"
+        fi
+        ;;
+    "-m") # open most edited file in directory
+        if [ "$#" -gt 2 ]; then
+            echo "E: Too many arguments entered"
+        fi
+        if [ "$#" -eq 2 ]; then
+            if [ -d "$2" ]; then
+                DIRPATH="$2"
+            else
+                echo "E: Invalid directory entered" >&2
+                exit 1
+            fi
+            open_most_edited "$DIRPATH"
+        elif [ "$#" -eq 1 ]; then
+            DIRPATH="$(realpath .)"
+            open_most_edited "$DIRPATH"
+        fi
+        ;;
+    "-b") # list file before entered date
+        if [ "$#" -gt 3 ]; then
+            echo "E: Too many arguments entered" >&2
+            exit 1
+        fi
+        if ! echo "$2" | egrep -q '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'; then # check if correct date format was entered
+			echo "Error: Wrong date format entered" >&2
+			exit 1
+		else
+            DATE=$(echo "$2" | sed "s/-//g")
+        fi
+        if [ "$#" -eq 3 ] && [ -d "$3" ]; then
+            DIRPATH="$3"
+            list_before "$DIRPATH" "$DATE"
+        elif [ "$#" -eq 2 ]; then
+            DIRPATH="$(realpath .)"
+            list_before "$DIRPATH" "$DATE"
+        else
+            echo "E: Invalid directory entered" >&2
+            exit 1
+        fi
+        ;;
+    "-a") # list files after entered date
+        if [ "$#" -gt 3 ]; then
+            echo "E: Too many arguments entered" >&2
+            exit 1
+        fi
+        if ! echo "$2" | egrep -q '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'; then
+			echo "Error: Wrong date format entered" >&2
+			exit 1
+		else
+            DATE=$(echo "$2" | sed "s/-//g")
+        fi
+        if [ "$#" -eq 3 ] && [ -d "$3" ]; then
+            DIRPATH="$3"
+            list_after "$DIRPATH" "$DATE"
+        elif [ "$#" -eq 2 ]; then
+            DIRPATH="$(realpath .)"
+            list_after "$DIRPATH" "$DATE"
+        else
+            echo "E: Invalid directory entered" >&2
+            exit 1
+        fi
+        ;;
+    *) # open selected file or create and open it if it doesnt exist
+        if [ -f "$1" ]; then # open file for editing
+            ARG="$1"
+            "$USING_EDITOR" "$ARG"
+            log_edit
+        fi
+        if [ -d "$1" ]; then # open last edited file from directory
+            DIRPATH="$1"
+            open_last_edited "$DIRPATH"
+            log_edit
+        fi
+        if [ "$#" -eq 0 ]; then # open last edited file in current directory
+            DIRPATH="$(realpath .)"
+            open_last_edited "$DIRPATH"
+            log_edit
+            exit "$?" # exit to prevent opening empty buffer
+        fi
+        if ! [ -d "$1" ] && ! [ -f "$1" ]; then # create file if it doesnt exist
+            IS_PATH=$(echo "$1" | grep '[\/]')
+            if ! [ -z "$IS_PATH" ]; then
+                FILEPATH=$(echo "$1" | sed 's/\(.*\)\/.*/\1/')
+                ARG=$(echo "$1" | sed 's:.*/::')
+                mkdir -p "$FILEPATH"
+                cd "$FILEPATH" || exit 1
+                touch "$ARG"
+                "$USING_EDITOR" "$ARG"
+                log_edit
+            else
+                ARG="$1"
+                touch "$1"
+                "$USING_EDITOR" "$ARG"
+                log_edit
+            fi
+        fi
+esac
+exit 0
